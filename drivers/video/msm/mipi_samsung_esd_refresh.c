@@ -21,9 +21,17 @@
  */
 
 #include "mipi_samsung_esd_refresh.h"
+#include "linux/msm_mdp.h"
+
 
 static struct mipi_controls mipi_control;
 static struct esd_data_t *esd_enable;
+#if defined(CONFIG_MACH_M2)
+	static int qc_method = 1;
+#else
+	static int qc_method = 0;
+#endif
+
 static irqreturn_t sec_esd_irq_handler(int irq, void *handle);
 
 #ifdef READ_REGISTER_ESD
@@ -151,26 +159,33 @@ static irqreturn_t sec_esd_irq_handler(int irq, void *handle)
 {
 	struct esd_data_t *p_esd_data = (struct esd_data_t *) handle;
 	struct msm_fb_data_type *mfd;
+	char *envp[2] = {"PANEL_ALIVE=0", NULL};
 
 	if (!mipi_control.mipi_dev)
 		return IRQ_HANDLED;
 	else
 		mfd = platform_get_drvdata(mipi_control.mipi_dev);
+	if (!qc_method) {
 
-	if (!mfd->panel_power_on || p_esd_data->refresh_ongoing
-		|| p_esd_data->esd_irq_enable == false) {
-		/* Panel is not powered ON So bogus ESD/
-		ESD Already executing*/
-		return IRQ_HANDLED;
-	}
+		if (!mfd->panel_power_on || p_esd_data->refresh_ongoing
+			|| p_esd_data->esd_irq_enable == false) {
+			/* Panel is not powered ON So bogus ESD/
+			ESD Already executing*/
+			return IRQ_HANDLED;
+		}
 #if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT)
-	/* ESD occurred during Wakeup/Suspend, So ignore */
-	if (mfd->resume_state)
-		return IRQ_HANDLED;
+		/* ESD occurred during Wakeup/Suspend, So ignore */
+		if (mfd->resume_state)
+			return IRQ_HANDLED;
 #endif
-	p_esd_data->esd_irq_enable = false;
-	schedule_work(&p_esd_data->det_work);
-
+		p_esd_data->esd_irq_enable = false;
+		schedule_work(&p_esd_data->det_work);
+	} else if (!esd_enable->esd_ignore && mfd->panel_power_on ) {
+		kobject_uevent_env(&mfd->fbi->dev->kobj, KOBJ_CHANGE, envp);
+		pr_err("%s: Panel has gone bad, sending uevent - %s\n", __func__, envp[0]);
+		esd_enable->refresh_ongoing = true;
+		esd_enable->esd_ignore = true;
+	}
 	return IRQ_HANDLED;
 }
 
@@ -203,8 +218,26 @@ void register_mipi_dev(struct platform_device *mipi_dev)
 }
 static void set_esd_enable_work_func(struct work_struct *work)
 {
-	pr_info("%s is called\n", __func__);
+	struct msm_fb_panel_data *pdata;
+	struct msm_fb_data_type *mfd;
+
+	pr_info("%s is called %d\n", __func__, esd_enable->esd_ignore);
+	mfd = platform_get_drvdata(mipi_control.mipi_dev);
+	if (qc_method && esd_enable->refresh_ongoing) {
+		// ESD has happend restore backlight
+
+		/* Restore brightness */
+				pdata = mipi_control.mipi_dev->dev.platform_data;
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT) || \
+			defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_CMD_QHD_PT)
+				reset_gamma_level();
+#endif
+				pdata->set_backlight(mfd);
+		esd_enable->refresh_ongoing = false;
+	}
+
 	esd_enable->esd_ignore = false;
+	pr_info("%s is called %d ---\n", __func__, esd_enable->esd_ignore);
 
 }
 

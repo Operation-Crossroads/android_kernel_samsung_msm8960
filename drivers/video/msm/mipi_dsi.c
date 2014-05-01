@@ -37,6 +37,7 @@
 #if defined(CONFIG_MIPI_SAMSUNG_ESD_REFRESH)
 #include "mipi_samsung_esd_refresh.h"
 #endif
+#define DSI_VIDEO_BASE	0xE0000
 
 u32 dsi_irq;
 u32 esc_byte_ratio;
@@ -81,6 +82,7 @@ static int mipi_dsi_off(struct platform_device *pdev)
 	int ret = 0;
 	struct msm_fb_data_type *mfd;
 	struct msm_panel_info *pinfo;
+	uint32 dsi_ctrl;
 
 	pr_debug("%s+:\n", __func__);
 
@@ -104,8 +106,8 @@ static int mipi_dsi_off(struct platform_device *pdev)
 	/*
 	 * Desctiption: change to DSI_CMD_MODE since it needed to
 	 * tx DCS dsiplay off comamnd to panel
+	 * mipi_dsi_op_mode_config(DSI_CMD_MODE);
 	 */
-	mipi_dsi_op_mode_config(DSI_CMD_MODE);
 
 	if (mfd->panel_info.type == MIPI_CMD_PANEL) {
 		if (pinfo->lcd.vsync_enable) {
@@ -124,7 +126,12 @@ static int mipi_dsi_off(struct platform_device *pdev)
 	mipi_dsi_clk_disable();
 
 	/* disbale dsi engine */
-	MIPI_OUTP(MIPI_DSI_BASE + 0x0000, 0);
+	dsi_ctrl = MIPI_INP(MIPI_DSI_BASE + 0x0000);
+	dsi_ctrl &= ~0x01;
+	MIPI_OUTP(MIPI_DSI_BASE + 0x0000, dsi_ctrl);
+
+	MIPI_OUTP(MIPI_DSI_BASE + 0x010c, 0); /* DSI_INTL_CTRL */
+	MDP_OUTP(MDP_BASE + DSI_VIDEO_BASE, 0);
 
 	mipi_dsi_phy_ctrl(0);
 
@@ -266,7 +273,27 @@ static int mipi_dsi_on(struct platform_device *pdev)
 	}
 
 	mipi_dsi_host_init(mipi);
-
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT_PANEL)
+	{
+		u32 tmp_reg0c, tmp_rega8;
+		udelay(200);
+		/* backup register values */
+		tmp_reg0c = MIPI_INP(MIPI_DSI_BASE + 0x000c);
+		tmp_rega8 = MIPI_INP(MIPI_DSI_BASE + 0xA8);
+		/* Clear HS  mode assertion and related flags */
+		MIPI_OUTP(MIPI_DSI_BASE + 0x0c, 0x8000);
+		MIPI_OUTP(MIPI_DSI_BASE + 0xA8, 0x0);
+		wmb();
+		mdelay(10);
+		if (mipi_dsi_pdata && mipi_dsi_pdata->lcd_rst_up)
+		mipi_dsi_pdata->lcd_rst_up();
+		/* restore previous values */
+		MIPI_OUTP(MIPI_DSI_BASE + 0x0c, tmp_reg0c);
+		MIPI_OUTP(MIPI_DSI_BASE + 0xa8, tmp_rega8);
+		wmb();
+	}
+#else
+	msleep(10);
 #if defined(CONFIG_FB_MSM_MIPI_MAGNA_OLED_VIDEO_WVGA_PT)
 	/* LP11 */
 	tmp = MIPI_INP(MIPI_DSI_BASE + 0xA8);
@@ -280,6 +307,7 @@ static int mipi_dsi_on(struct platform_device *pdev)
 			mipi_dsi_pdata->active_reset(); /* high */
 	usleep(10000);
 
+#endif
 #endif
 
 	if (mipi->force_clk_lane_hs) {

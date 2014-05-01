@@ -1056,6 +1056,12 @@ config FB_MSM_EBI2_PANEL_DETECT
 	---help---
 	  Support for EBI2 panel auto detect
 
+config FB_MDP4_ENHANCE
+	bool "MDP4 VIDEO ENHANCEMENT"
+	default n
+	---help---
+	  Support for mdp4 video enhancement
+
 if FB_MSM_MDSS
 	source "drivers/video/msm/mdss/Kconfig"
 endif

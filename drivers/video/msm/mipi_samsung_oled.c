@@ -14,6 +14,7 @@
 #include <linux/wakelock.h>
 #include <linux/pm_qos.h>
 #include <mach/cpuidle.h>
+#include "msm_fb.h"
 #include "mipi_samsung_oled.h"
 #include "mdp4.h"
 #ifdef CONFIG_SAMSUNG_CMC624
@@ -22,11 +23,7 @@
 #if defined(CONFIG_MIPI_SAMSUNG_ESD_REFRESH)
 #include "mipi_samsung_esd_refresh.h"
 #endif
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_CMD_QHD_PT) \
-	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT) \
-	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT) \
-	|| defined(CONFIG_FB_MSM_MIPI_MAGNA_OLED_VIDEO_QHD_PT) \
-	|| defined(CONFIG_FB_MSM_MIPI_MAGNA_OLED_VIDEO_WVGA_PT)
+#if defined(CONFIG_FB_MDP4_ENHANCE)
 #include "mdp4_video_enhance.h"
 #endif
 
@@ -86,7 +83,9 @@ static uint32 mipi_samsung_manufacture_id(struct msm_fb_data_type *mfd)
 	mipi_dsi_buf_init(tp);
 
 #ifdef CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT
+
 	cmd_lp = samsung_manufacture_id1_cmd;
+
 	mipi_dsi_cmds_rx_lp(mfd, tp, rp, cmd_lp, 1);
 #else
 	cmd = &samsung_manufacture_id1_cmd;
@@ -904,6 +903,7 @@ static int mipi_samsung_disp_off(struct platform_device *pdev)
 #endif
 
 	msd.mpd->ldi_acl_stat = false;
+	mfd->resume_state = MIPI_SUSPEND_STATE;
 
 	return 0;
 }
@@ -995,10 +995,10 @@ if (msd.mpd->set_elvss)
 #endif
 
 #ifdef USE_ACL
-if (msd.mpd->set_acl && msd.dstat.acl_on && msd.mpd->set_acl(mfd->bl_level))
+if (msd.mpd->set_acl && (msd.dstat.acl_on || msd.dstat.siop_status) && msd.mpd->set_acl(mfd->bl_level))
 	mipi_samsung_disp_send_cmd(mfd, PANEL_ACL_OFF, true);
 
-if (msd.mpd->set_acl && msd.dstat.acl_on && !msd.mpd->set_acl(mfd->bl_level)) {
+if (msd.mpd->set_acl && (msd.dstat.acl_on || msd.dstat.siop_status) && !msd.mpd->set_acl(mfd->bl_level)) {
 #if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_CMD_QHD_PT)
 	mipi_samsung_disp_send_cmd(mfd, PANEL_ACL_ON, true);
 #endif
@@ -1011,6 +1011,45 @@ end:
 	mfd->backlight_ctrl_ongoing = FALSE;
 #endif
 	return;
+}
+
+int  mipi_samsung_disp_blank(struct platform_device *pdev,int blank)
+{
+	static int curr_status;
+	struct msm_fb_data_type *mfd;
+
+	mfd = platform_get_drvdata(pdev);
+	if (unlikely(!mfd))
+		return -ENODEV;
+	if (unlikely(mfd->key != MFD_KEY))
+		return -EINVAL;
+
+	pr_info("%s(%d)", __func__, blank);
+	if (curr_status == blank)
+		return 0;
+
+	pr_info("%s(%d)++", __func__, blank);
+	if (!blank) {
+		#if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT) && \
+			!defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT)
+			mipi_samsung_disp_send_cmd(mfd, PANEL_LATE_ON, true);
+		#endif
+	}
+	else {
+		#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT)
+			mipi_samsung_disp_send_cmd(mfd, PANEL_OFF, false);
+		#endif
+
+		#if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT)
+			mipi_samsung_disp_send_cmd(mfd, PANEL_EARLY_OFF, true);
+		#else
+			mipi_samsung_disp_send_cmd(mfd, PANEL_READY_TO_OFF, true);
+		#endif
+		mdelay(20);
+	}
+
+	curr_status = blank;
+	return 0;
 }
 
 #if defined(CONFIG_HAS_EARLYSUSPEND)
@@ -1052,27 +1091,13 @@ static void mipi_samsung_disp_early_suspend(struct early_suspend *h)
 		return;
 	}
 #endif
-
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT)
-	mipi_samsung_disp_send_cmd(mfd, PANEL_OFF, false);
-#endif
-
-#if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT) && \
-	!defined(CONFIG_FB_MSM_MIPI_MAGNA_OLED_VIDEO_QHD_PT)
-
-	mipi_samsung_disp_send_cmd(mfd, PANEL_EARLY_OFF, true);
-#else
-	mipi_samsung_disp_send_cmd(mfd, PANEL_READY_TO_OFF, true);
-#endif
 	mfd->resume_state = MIPI_SUSPEND_STATE;
 }
 
 static void mipi_samsung_disp_late_resume(struct early_suspend *h)
 {
 	struct msm_fb_data_type *mfd;
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_CMD_QHD_PT) \
-	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT) \
-	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT)
+#if defined(CONFIG_FB_MDP4_ENHANCE)
 	is_negativeMode_on();
 #endif
 	mfd = platform_get_drvdata(msd.msm_pdev);
@@ -1092,18 +1117,18 @@ static void mipi_samsung_disp_late_resume(struct early_suspend *h)
 	mipi_samsung_disp_backlight(mfd);
 #endif
 
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_CMD_QHD_PT)
+	mfd->fbi->fbops->fb_blank(FB_BLANK_UNBLANK, mfd->fbi);
+	mfd->fbi->fbops->fb_pan_display(&mfd->fbi->var, mfd->fbi);
+#endif
+
 #if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT) \
 	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT) \
 	|| defined(CONFIG_FB_MSM_MIPI_MAGNA_OLED_VIDEO_QHD_PT) \
 	|| defined(CONFIG_FB_MSM_MIPI_MAGNA_OLED_VIDEO_WVGA_PT)
 	mfd->resume_state = MIPI_RESUME_STATE;
 #endif
-
-#if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT) && \
-	!defined(CONFIG_FB_MSM_MIPI_MAGNA_OLED_VIDEO_QHD_PT) && \
-	!defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT)
-	mipi_samsung_disp_send_cmd(mfd, PANEL_LATE_ON, true);
-#endif
+	mipi_samsung_disp_blank(msd.msm_pdev, 0);
 	pr_info("%s", __func__);
 }
 #endif
@@ -1305,10 +1330,18 @@ static ssize_t mipi_samsung_auto_brightness_show(struct device *dev,
 static ssize_t mipi_samsung_auto_brightness_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size)
 {
-	if (sysfs_streq(buf, "1"))
-		msd.dstat.auto_brightness = 1;
-	else if (sysfs_streq(buf, "0"))
+	if (sysfs_streq(buf, "0"))
 		msd.dstat.auto_brightness = 0;
+	else if (sysfs_streq(buf, "1"))
+		msd.dstat.auto_brightness = 1;
+	else if (sysfs_streq(buf, "2"))
+		msd.dstat.auto_brightness = 2;
+	else if (sysfs_streq(buf, "3"))
+		msd.dstat.auto_brightness = 3;
+	else if (sysfs_streq(buf, "4"))
+		msd.dstat.auto_brightness = 4;
+	else if (sysfs_streq(buf, "5"))
+		msd.dstat.auto_brightness = 5;
 	else
 		pr_info("%s: Invalid argument!!", __func__);
 
@@ -1316,7 +1349,7 @@ static ssize_t mipi_samsung_auto_brightness_store(struct device *dev,
 }
 
 #ifdef CONFIG_SAMSUNG_CMC624
-void mipi_samsung_oled_display_fast_init()
+void mipi_samsung_oled_display_fast_init(void)
 {
 	struct msm_fb_data_type *mfd;
 	if (samsung_has_cmc624())
@@ -1339,6 +1372,57 @@ static struct lcd_ops mipi_samsung_disp_props = {
 #endif
 };
 
+static ssize_t mipi_samsung_disp_siop_show(struct device *dev,
+			struct device_attribute *attr, char *buf)
+{
+	int rc;
+
+	rc = snprintf((char *)buf, sizeof(buf), "%d\n", msd.dstat.siop_status);
+	pr_info("siop status: %d\n", *buf);
+
+	return rc;
+}
+
+static ssize_t mipi_samsung_disp_siop_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct msm_fb_data_type *mfd;
+
+	mfd = platform_get_drvdata(msd.msm_pdev);
+
+	if (sysfs_streq(buf, "1"))
+		msd.dstat.siop_status = true;
+	else if (sysfs_streq(buf, "0"))
+		msd.dstat.siop_status = false;
+	else {
+		pr_info("%s: Invalid argument!!", __func__);
+		return size;
+	}
+
+	if (mfd->panel_power_on) {
+		if (msd.dstat.siop_status) {
+			if (msd.mpd->set_acl(mfd->bl_level))
+				mipi_samsung_disp_send_cmd(
+					mfd, PANEL_ACL_OFF, true);
+			else {
+				mipi_samsung_disp_send_cmd(
+					mfd, PANEL_ACL_ON, true);
+				mipi_samsung_disp_send_cmd(
+					mfd, PANEL_ACL_UPDATE, true);
+			}
+		}
+		else
+			mipi_samsung_disp_send_cmd(mfd, PANEL_ACL_OFF, true);
+	}
+	else
+		pr_info("%s : panel is off state. updating state value.\n", __func__);
+
+	pr_info("%s : acl_status (%d) siop_status (%d)",
+			__func__, msd.dstat.acl_on, msd.dstat.siop_status);
+
+	return size;
+}
+
 #ifdef WA_FOR_FACTORY_MODE
 static DEVICE_ATTR(lcd_power, S_IRUGO | S_IWUSR,
 			mipi_samsung_disp_get_power,
@@ -1354,6 +1438,10 @@ static DEVICE_ATTR(power_reduce, S_IRUGO | S_IWUSR | S_IWGRP,
 static DEVICE_ATTR(auto_brightness, S_IRUGO | S_IWUSR | S_IWGRP,
 			mipi_samsung_auto_brightness_show,
 			mipi_samsung_auto_brightness_store);
+
+static DEVICE_ATTR(siop_enable, S_IRUGO | S_IWUSR | S_IWGRP,
+			mipi_samsung_disp_siop_show,
+			mipi_samsung_disp_siop_store);
 
 #endif
 
@@ -1427,7 +1515,9 @@ static void read_error_register(struct msm_fb_data_type *mfd)
 	mipi_dsi_buf_init(tp);
 
 #if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT)
+
 	cmd_lp = error_id2_cmd;
+
 	mipi_dsi_cmds_rx_lp(mfd, tp, rp, cmd_lp, 1);
 	error_buf[0] = *rp->data;
 	mipi_dsi_cmds_rx_lp(mfd, tp, rp, cmd_lp, 1);
@@ -1524,7 +1614,7 @@ static int __devinit mipi_samsung_disp_probe(struct platform_device *pdev)
 #if defined(CONFIG_HAS_EARLYSUSPEND)
 	msd.early_suspend.suspend = mipi_samsung_disp_early_suspend;
 	msd.early_suspend.resume = mipi_samsung_disp_late_resume;
-	msd.early_suspend.level = EARLY_SUSPEND_LEVEL_DISABLE_FB - 10;
+	msd.early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN;
 	register_early_suspend(&msd.early_suspend);
 
 #endif
@@ -1573,6 +1663,13 @@ static int __devinit mipi_samsung_disp_probe(struct platform_device *pdev)
 	}
 
 	ret = sysfs_create_file(&lcd_device->dev.kobj,
+					&dev_attr_siop_enable.attr);
+	if (ret) {
+		pr_info("sysfs create fail-%s\n",
+				dev_attr_siop_enable.attr.name);
+	}
+
+	ret = sysfs_create_file(&lcd_device->dev.kobj,
 					&dev_attr_panel_colors.attr);
 
 #if defined(CONFIG_BACKLIGHT_CLASS_DEVICE)
@@ -1603,9 +1700,14 @@ static int __devinit mipi_samsung_disp_probe(struct platform_device *pdev)
 		ret = cmc624_sysfs_init();
 		if (ret < 0)
 			pr_debug("CMC624 sysfs initialize FAILED\n");
-	} else
+	} else {
+#endif /* CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT */
+#if defined(CONFIG_FB_MDP4_ENHANCE)
 		init_mdnie_class();
-#endif
+#endif /* CONFIG_FB_MDP4_ENHANCE */
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT)
+	}
+#endif /* CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_HD_PT */
 
 #ifdef READ_REGISTER_ESD
 	msd.mpd->esd_workqueue = create_singlethread_workqueue("esd_workqueue");
@@ -1636,6 +1738,9 @@ static struct msm_fb_panel_data samsung_panel_data = {
 	.on		= mipi_samsung_disp_on,
 	.off		= mipi_samsung_disp_off,
 	.set_backlight	= mipi_samsung_disp_backlight,
+#ifdef MIPI_SAMSUNG_PANEL_BLANKING
+	.panel_blank = mipi_samsung_disp_blank,
+#endif /* MIPI_SAMSUNG_PANEL_BLANKING */
 };
 
 static int ch_used[3];
@@ -1718,6 +1823,7 @@ static int __init mipi_samsung_disp_init(void)
 
 	pm_qos_add_request(&pm_qos_req, PM_QOS_CPU_DMA_LATENCY,
 		PM_QOS_DEFAULT_VALUE);
+
 
 	return platform_driver_register(&this_driver);
 }

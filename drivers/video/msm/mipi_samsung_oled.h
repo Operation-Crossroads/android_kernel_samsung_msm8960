@@ -182,6 +182,7 @@ struct mipi_panel_data {
 };
 struct display_status {
 	unsigned char acl_on;
+	unsigned char siop_status;
 	unsigned char gamma_mode; /* 1: 1.9 gamma, 0: 2.2 gamma */
 	unsigned char is_smart_dim_loaded;
 	unsigned char is_elvss_loaded;
