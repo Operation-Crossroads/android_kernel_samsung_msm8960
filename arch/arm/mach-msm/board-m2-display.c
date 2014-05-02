@@ -1411,8 +1411,8 @@ static struct msm_bus_vectors mdp_ui_vectors[] = {
 	{
 		.src = MSM_BUS_MASTER_MDP_PORT0,
 		.dst = MSM_BUS_SLAVE_EBI_CH0,
-		.ab = 216000000 * 2,
-		.ib = 270000000 * 2,
+		.ab = 248832000 * 2,
+		.ib = 311040000 * 2,
 	},
 };
 
@@ -1421,8 +1421,8 @@ static struct msm_bus_vectors mdp_vga_vectors[] = {
 	{
 		.src = MSM_BUS_MASTER_MDP_PORT0,
 		.dst = MSM_BUS_SLAVE_EBI_CH0,
-		.ab = 216000000 * 2,
-		.ib = 270000000 * 2,
+		.ab = 248832000 * 2,
+		.ib = 311040000 * 2,
 	},
 };
 
@@ -1431,8 +1431,8 @@ static struct msm_bus_vectors mdp_720p_vectors[] = {
 	{
 		.src = MSM_BUS_MASTER_MDP_PORT0,
 		.dst = MSM_BUS_SLAVE_EBI_CH0,
-		.ab = 230400000 * 2,
-		.ib = 288000000 * 2,
+		.ab = 304128000 * 2,
+		.ib = 380160000 * 2,
 	},
 };
 
@@ -1441,8 +1441,8 @@ static struct msm_bus_vectors mdp_1080p_vectors[] = {
 	{
 		.src = MSM_BUS_MASTER_MDP_PORT0,
 		.dst = MSM_BUS_SLAVE_EBI_CH0,
-		.ab = 334080000 * 2,
-		.ib = 417600000 * 2,
+		.ab = 407808000 * 4,
+		.ib = 509760000 * 4,
 	},
 };
 
@@ -1485,8 +1485,8 @@ static struct msm_panel_common_pdata mdp_pdata = {
 	.gpio = MDP_VSYNC_GPIO,
 	.mdp_max_clk = 200000000,
 	.mdp_max_bw = 2000000000,
-	.mdp_bw_ab_factor = 230,
-	.mdp_bw_ib_factor = 250,
+	.mdp_bw_ab_factor = 115,
+	.mdp_bw_ib_factor = 150,
 #ifdef CONFIG_MSM_BUS_SCALING
 	.mdp_bus_scale_table = &mdp_bus_scale_pdata,
 #endif
@@ -1496,7 +1496,9 @@ static struct msm_panel_common_pdata mdp_pdata = {
 #else
 	.mem_hid = MEMTYPE_EBI1,
 #endif
-	.cont_splash_enabled = 0x0,
+	.cont_splash_enabled = 0x00,
+	.splash_screen_addr = 0x00,
+	.splash_screen_size = 0x00,
 	.mdp_iommu_split_domain = 0,
 };
 

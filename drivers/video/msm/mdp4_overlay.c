@@ -684,6 +684,25 @@ static uint32 mdp4_scale_phase_step(int f_num, uint32 src, uint32 dst)
 
 static void mdp4_scale_setup(struct mdp4_overlay_pipe *pipe)
 {
+	int scale_w = 0;
+	int scale_h = 0;
+	int force_pixel_rpt = 0;
+
+	if (pipe->pipe_type == OVERLAY_TYPE_VIDEO) {
+		if (pipe->src_h > pipe->dst_h)
+			scale_h = 1;
+		else if (pipe->src_h < pipe->dst_h)
+			scale_h = 2;
+
+		if (pipe->src_w > pipe->dst_w)
+			scale_w = 1;
+		else if (pipe->src_w < pipe->dst_w)
+			scale_w = 2;
+
+		if (scale_h != 0 && scale_w != 0 && scale_h != scale_w)
+			force_pixel_rpt = 1;
+	}
+
 	pipe->phasex_step = MDP4_VG_PHASE_STEP_DEFAULT;
 	pipe->phasey_step = MDP4_VG_PHASE_STEP_DEFAULT;
 
@@ -700,6 +719,8 @@ static void mdp4_scale_setup(struct mdp4_overlay_pipe *pipe)
 		if (pipe->pipe_type == OVERLAY_TYPE_VIDEO) {
 			if (pipe->flags & MDP_BACKEND_COMPOSITION &&
 				pipe->alpha_enable && pipe->dst_h > pipe->src_h)
+				pipe->op_mode |= MDP4_OP_SCALEY_PIXEL_RPT;
+			else if (force_pixel_rpt && pipe->dst_h > pipe->src_h)
 				pipe->op_mode |= MDP4_OP_SCALEY_PIXEL_RPT;
 			else if (pipe->dst_h <= (pipe->src_h / 4))
 				pipe->op_mode |= MDP4_OP_SCALEY_MN_PHASE;
@@ -728,6 +749,8 @@ static void mdp4_scale_setup(struct mdp4_overlay_pipe *pipe)
 			if (pipe->flags & MDP_BACKEND_COMPOSITION &&
 				pipe->alpha_enable && pipe->dst_w > pipe->src_w)
 				pipe->op_mode |= MDP4_OP_SCALEX_PIXEL_RPT;
+			else if (force_pixel_rpt && pipe->dst_w > pipe->src_w)
+				 pipe->op_mode |= MDP4_OP_SCALEX_PIXEL_RPT;
 			else if (pipe->dst_w <= (pipe->src_w / 4))
 				pipe->op_mode |= MDP4_OP_SCALEX_MN_PHASE;
 			else
@@ -2847,7 +2870,11 @@ static int mdp4_calc_req_mdp_clk(struct msm_fb_data_type *mfd,
 	    (src_h != dst_h) &&
 	    (mfd->panel_info.lcdc.v_back_porch)) {
 		u32 clk = 0;
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT)
+		clk = 6 * (pclk >> shift) / mfd->panel_info.lcdc.v_back_porch;
+#else
 		clk = 4 * (pclk >> shift) / mfd->panel_info.lcdc.v_back_porch;
+#endif
 		clk <<= shift;
 		pr_debug("%s: mdp clk rate %d based on low vbp %d\n",
 			 __func__, clk, mfd->panel_info.lcdc.v_back_porch);
@@ -2950,7 +2977,13 @@ static int mdp4_calc_pipe_mdp_bw(struct msm_fb_data_type *mfd,
 	}
 
 	fps = mdp_get_panel_framerate(mfd);
-	quota = pipe->src_w * pipe->src_h * fps * pipe->bpp;
+
+	if ((pipe->bpp == 2) && (pipe->src_format == 0))
+		quota = pipe->src_w * pipe->src_h * fps * pipe->bpp * 2;
+	else if ((pipe->src_w == 1080) && (pipe->src_h <= 426))
+		quota = pipe->src_w * pipe->src_h * fps * pipe->bpp * 3;
+	else
+		quota = pipe->src_w * pipe->src_h * fps * pipe->bpp;
 
 	quota >>= shift;
 	/* factor 1.15 for ab */
@@ -3090,9 +3123,17 @@ int mdp4_overlay_mdp_perf_req(struct msm_fb_data_type *mfd)
 	struct mdp4_overlay_pipe *pipe;
 	u32 cnt = 0;
 	int ret = -EINVAL;
-	u64 ab_quota_total = 0, ib_quota_total = 0;
+	int verysmallarea = 0;
+	int yuvcount = 0;
+	int src_h_total = 0;
+	int src_w_total = 0;
+	static u64 minimum_ab = 0;
+	static u64 minimum_ib = 0;
+
 	u64 ab_quota_port0 = 0, ib_quota_port0 = 0;
 	u64 ab_quota_port1 = 0, ib_quota_port1 = 0;
+
+	u64 ab_quota_total = 0, ib_quota_total = 0;
 
 	if (!mfd) {
 		pr_err("%s: mfd is null!\n", __func__);
@@ -3135,6 +3176,19 @@ int mdp4_overlay_mdp_perf_req(struct msm_fb_data_type *mfd)
 				ib_quota_port0 += pipe->bw_ib_quota;
 			}
 		}
+
+		if (pipe->pipe_type == OVERLAY_TYPE_RGB) {
+			if (pipe->src_w * pipe->src_h < 300 * 300)
+				verysmallarea++;
+			src_h_total += pipe->src_h;
+			src_w_total += pipe->src_w;
+		}
+
+		if (pipe->pipe_type == OVERLAY_TYPE_VIDEO) {
+			if (pipe->bpp == 2)
+				yuvcount++;
+		}
+
 		if (mfd->mdp_rev == MDP_REV_41) {
 			/*
 			 * writeback (blt) mode to provide work around
@@ -3183,9 +3237,72 @@ int mdp4_overlay_mdp_perf_req(struct msm_fb_data_type *mfd)
 		}
 	}
 
+	if (minimum_ab == 0 || minimum_ib == 0) {
+		minimum_ab = (1920 * 1080 * 4 * 60) >> 16;
+		minimum_ab = (minimum_ab * mdp_bw_ab_factor / 100) << 16;
+		minimum_ib = (1920 * 1080 * 4 * 60) >> 16;
+		minimum_ib = (minimum_ib * mdp_bw_ib_factor / 100) << 16;
+	}
+
+	/*
+	 * For small video + small rgb layers above them
+	 * offset some bw
+	 */
+	if ((cnt >= 3) && (ab_quota_total < minimum_ab) && yuvcount == 1) {
+		if ((verysmallarea + yuvcount) == (cnt - 1)) {
+			ab_quota_total += MDP_BUS_SCALE_AB_STEP;
+			ib_quota_total += MDP_BUS_SCALE_AB_STEP;
+			ab_quota_port1 += MDP_BUS_SCALE_AB_STEP;
+			ib_quota_port1 += MDP_BUS_SCALE_AB_STEP;
+			ab_quota_port0 += MDP_BUS_SCALE_AB_STEP;
+			ib_quota_port0 += MDP_BUS_SCALE_AB_STEP;
+		} else {
+			ab_quota_total = minimum_ab;
+			ib_quota_total = minimum_ib;
+			ab_quota_port1 = minimum_ab >> 1;
+			ib_quota_port1 = minimum_ib >> 1;
+			ab_quota_port0 = minimum_ab >> 1;
+			ib_quota_port0 = minimum_ib >> 1;
+		}
+	}
+
+	/*
+	 * For Small RGB layers without video layer offset some
+	 * bandwidth to prevent underruns
+	 */
+	if ((cnt >= 2) && (src_h_total * src_w_total < 1920 * 1080)
+			&& (ab_quota_total < minimum_ab) && yuvcount == 0) {
+		u64 bw_extra =  (minimum_ab - ab_quota_total) >>  1 ;
+		int fact = ((int)(bw_extra >> 16)) / ((int)(ab_quota_total >> 16));
+
+		/* Do not increase bw for layers which require more than 3 folds */
+		if (fact <= 3) {
+			ab_quota_total += bw_extra;
+			ib_quota_total += bw_extra;
+			ab_quota_port1 += bw_extra >> 1;
+			ib_quota_port1 += bw_extra >> 1;
+			ab_quota_port0 += bw_extra >> 1;
+			ib_quota_port0 += bw_extra >> 1;
+		}
+	}
+
 	perf_req->mdp_ab_bw = roundup(ab_quota_total, MDP_BUS_SCALE_AB_STEP);
 	perf_req->mdp_ib_bw = roundup(ib_quota_total, MDP_BUS_SCALE_AB_STEP);
+#if defined(CONFIG_MACH_M2)
+if (cnt > 3) {
+	perf_req->mdp_ab_port0_bw = perf_req->mdp_ab_port0_bw * 11;
+	perf_req->mdp_ab_port0_bw = perf_req->mdp_ab_port0_bw >> 3;
 
+	perf_req->mdp_ib_port0_bw = perf_req->mdp_ib_port0_bw * 11;
+	perf_req->mdp_ib_port0_bw = perf_req->mdp_ib_port0_bw >> 3;
+
+	perf_req->mdp_ab_port1_bw = perf_req->mdp_ab_port1_bw * 11;
+	perf_req->mdp_ab_port1_bw = perf_req->mdp_ab_port1_bw >> 3;
+
+	perf_req->mdp_ib_port1_bw = perf_req->mdp_ib_port1_bw * 11;
+	perf_req->mdp_ib_port1_bw = perf_req->mdp_ib_port1_bw >> 3;
+}
+#endif
 	perf_req->mdp_ab_port0_bw =
 		roundup(ab_quota_port0, MDP_BUS_SCALE_AB_STEP);
 	perf_req->mdp_ib_port0_bw =

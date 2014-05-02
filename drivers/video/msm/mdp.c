@@ -2417,7 +2417,7 @@ void mdp4_hw_init(void)
 
 #endif
 
-static int mdp_bus_scale_restore_request(void);
+int mdp_bus_scale_restore_request(void);
 
 static int mdp_on(struct platform_device *pdev)
 {
@@ -2641,7 +2641,7 @@ int mdp_bus_scale_update_request(u64 ab_p0, u64 ib_p0, u64 ab_p1, u64 ib_p1)
 	return msm_bus_scale_client_update_request
 		(mdp_bus_scale_handle, bus_index);
 }
-static int mdp_bus_scale_restore_request(void)
+int mdp_bus_scale_restore_request(void)
 {
 	pr_debug("%s: index=%d ab_p0=%llu ib_p0=%llu\n", __func__, bus_index,
 		 mdp_bus_usecases[bus_index].vectors[0].ab,
