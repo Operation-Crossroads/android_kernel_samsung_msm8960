@@ -1879,7 +1879,6 @@ static int msm_fb_release_all(struct fb_info *info, boolean is_all)
 	}
 
 	pm_runtime_put(info->dev);
-	pr_debug("Node: %d user: %d op_mode %d ref_count: %d", info->node, user, mfd->op_enable,mfd->ref_cnt);
 	return ret;
 }
 
