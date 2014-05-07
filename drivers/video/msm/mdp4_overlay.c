@@ -3239,9 +3239,9 @@ int mdp4_overlay_mdp_perf_req(struct msm_fb_data_type *mfd)
 
 	if (minimum_ab == 0 || minimum_ib == 0) {
 		minimum_ab = (1920 * 1080 * 4 * 60) >> 16;
-		minimum_ab = (minimum_ab * mdp_bw_ab_factor / 100) << 16;
+		minimum_ab = div_u64(minimum_ab * (u64)mdp_bw_ab_factor, 100) << 16;
 		minimum_ib = (1920 * 1080 * 4 * 60) >> 16;
-		minimum_ib = (minimum_ib * mdp_bw_ib_factor / 100) << 16;
+		minimum_ib = div_u64(minimum_ib * (u64)mdp_bw_ib_factor, 100) << 16;
 	}
 
 	/*
