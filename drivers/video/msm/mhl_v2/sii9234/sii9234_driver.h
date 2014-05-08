@@ -29,7 +29,7 @@
 #define CONFIG_SII9234_RCP		1
 #include <linux/input.h>
 #endif
-
+#include <linux/wakelock.h>
 /*Flag for MHL Factory test*/
 #define MHL_SS_FACTORY			1
 
@@ -471,6 +471,7 @@ struct sii9234_data {
 	atomic_t			is_irq_enabled;
 
 	struct mutex			lock;
+	struct mutex			msc_lock;
 	struct mutex			cbus_lock;
 	struct cbus_packet		cbus_pkt;
 	struct cbus_packet		cbus_pkt_buf[CBUS_PKT_BUF_COUNT];
@@ -488,6 +489,7 @@ struct sii9234_data {
 	struct work_struct		redetect_work;
 	struct work_struct		rgnd_work;
 	struct work_struct		mhl_cbus_write_stat_work;
+	struct wake_lock                mhl_wake_lock;
 };
 
 struct msc_packet {
@@ -497,7 +499,7 @@ struct msc_packet {
 	u8	data_2;
 	struct list_head p_msc_packet_list;
 };
-
+typedef bool boolean;
 #ifdef CONFIG_MHL_NEW_CBUS_MSC_CMD
 static int sii9234_msc_req_locked(struct sii9234_data *sii9234,
 					struct msc_packet *msc_pkt);
@@ -508,7 +510,6 @@ static void cbus_command_response(struct sii9234_data *sii9234);
 #endif
 static struct device *sii9244_mhldev;
 extern void mhl_hpd_handler(bool state);
-extern int detached_status;
 static void sii9234_detection_callback(struct work_struct *work);
 static void sii9234_cancel_callback(void);
 static u8 sii9234_tmds_control(struct sii9234_data *sii9234, bool enable);

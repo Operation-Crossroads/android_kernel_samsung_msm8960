@@ -1,10 +1,6 @@
 # drivers/video/msm/mhl_v2/Makefile
 #
-# Copyright (c) 2010 Samsung Electronics Co., Ltd.
-# 		http://www.samsung.com/
-# Aakash Manik
-#	aakash.manik@samsung.com
+# Copyright (c) 2013 Samsung Electronics Co., Ltd.
+#	http://www.samsung.com/
 
-
-
-obj-$(CONFIG_VIDEO_MHL_V2) += sii9234.o \
+obj-$(CONFIG_VIDEO_MHL_V2) += sii9234/
