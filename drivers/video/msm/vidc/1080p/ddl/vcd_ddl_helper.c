@@ -279,8 +279,9 @@ u32 ddl_decoder_dpb_init(struct ddl_client_context *ddl)
 					memset(kernel_vaddr + luma_size,
 						0x80808080,
 						vcd_frm->alloc_len - luma_size);
-					if (vcd_frm->ion_flag ==
-						ION_FLAG_CACHED) {
+					if (vcd_frm->ion_flag & ION_FLAG_CACHED)
+					if (vcd_frm->ion_flag == ION_FLAG_CACHED)
+					{
 						msm_ion_do_cache_op(
 						ddl_context->video_ion_client,
 						vcd_frm->buff_ion_handle,
