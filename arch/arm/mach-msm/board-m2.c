@@ -1620,7 +1620,7 @@ static void msm8960_mhl_gpio_init(void)
 {
 	int ret;
 
-	ret = gpio_request(GPIO_MHL_EN, "mhl_en");
+	ret = gpio_request(gpio_rev(MHL_EN), "mhl_en");
 	if (ret < 0) {
 		pr_err("mhl_en gpio_request is failed\n");
 		return;
@@ -1636,7 +1636,7 @@ static void msm8960_mhl_gpio_init(void)
 
 static void mhl_gpio_config(void)
 {
-	gpio_tlmm_config(GPIO_CFG(GPIO_MHL_EN, 0, GPIO_CFG_OUTPUT,
+	gpio_tlmm_config(GPIO_CFG(gpio_rev(MHL_EN), 0, GPIO_CFG_OUTPUT,
 				GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), 1);
 	gpio_tlmm_config(GPIO_CFG(GPIO_MHL_RST, 0, GPIO_CFG_OUTPUT,
 				GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), 1);
@@ -1660,6 +1660,7 @@ gpio_interrupt pin is very changable each different h/w_rev or  board.
 */
 int get_mhl_int_irq(void)
 {
+	printk("GPIO_MHL_INT %d\n",GPIO_MHL_INT);
 	return  MSM_GPIO_TO_INT(GPIO_MHL_INT);
 }
 
@@ -1672,32 +1673,38 @@ static void sii9234_hw_onoff(bool onoff)
 	VMHL_3.3V, VSIL_A_1.2V, VMHL_1.8V
 	just power control with HDMI_EN pin or control Regulator12*/
 	if (onoff) {
-		gpio_tlmm_config(GPIO_CFG(GPIO_MHL_EN, 0, GPIO_CFG_OUTPUT,
+		gpio_tlmm_config(GPIO_CFG(gpio_rev(MHL_EN), 0, GPIO_CFG_OUTPUT,
 			GPIO_CFG_PULL_UP, GPIO_CFG_2MA), 1);
-		mhl_l12 = regulator_get(NULL, "8921_l12");
-		rc = regulator_set_voltage(mhl_l12, 1200000, 1200000);
+		if (system_rev > BOARD_REV01) {
+			mhl_l12 = regulator_get(NULL, "8921_l12");
+			rc = regulator_set_voltage(mhl_l12, 1200000, 1200000);
 			if (rc)
 				pr_err("error setting voltage\n");
 			rc = regulator_enable(mhl_l12);
 				if (rc)
 					pr_err("error enabling regulator\n");
 			usleep(1*1000);
+		}
 
-		gpio_direction_output(GPIO_MHL_EN, 1);
+		gpio_direction_output(gpio_rev(MHL_EN), 1);
 	} else {
-		gpio_direction_output(GPIO_MHL_EN, 0);
-		if (mhl_l12) {
-			rc = regulator_disable(mhl_l12);
+		gpio_direction_output(gpio_rev(MHL_EN), 0);
+
+		if (system_rev > BOARD_REV01) {
+			if (mhl_l12) {
+				rc = regulator_disable(mhl_l12);
 				if (rc)
 					pr_err("error disabling regulator\n");
-		}
+			}
+	}
+
 		usleep_range(10000, 20000);
 
 		if (gpio_direction_output(GPIO_MHL_RST, 0))
 			pr_err("%s error in making GPIO_MHL_RST Low\n"
 			, __func__);
 
-		gpio_tlmm_config(GPIO_CFG(GPIO_MHL_EN, 0, GPIO_CFG_OUTPUT,
+		gpio_tlmm_config(GPIO_CFG(gpio_rev(MHL_EN), 0, GPIO_CFG_OUTPUT,
 			GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), 1);
 	}
 
