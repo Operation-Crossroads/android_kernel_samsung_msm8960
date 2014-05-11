@@ -247,4 +247,5 @@ int mipi_dsi_cmds_rx_lp(struct msm_fb_data_type *mfd,
 		struct dsi_buf *tp, struct dsi_buf *rp,
 		char *cmds, int rlen);
 #endif
+int get_lcd_attached(void);
 #endif  /* MIPI_SAMSUNG_OLED_H */

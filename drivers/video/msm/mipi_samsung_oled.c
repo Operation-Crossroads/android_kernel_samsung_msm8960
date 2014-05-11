@@ -1687,6 +1687,11 @@ err_device_put:
 	return ret;
 }
 
+int get_lcd_attached(void)
+{
+	return is_lcd_connected;
+}
+EXPORT_SYMBOL(get_lcd_attached);
 
 static int __init current_boot_mode(char *mode)
 {

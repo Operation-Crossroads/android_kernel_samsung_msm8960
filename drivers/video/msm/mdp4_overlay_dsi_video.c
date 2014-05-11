@@ -96,7 +96,7 @@ static void vsync_irq_disable(int intr, int term)
 	pr_debug("%s: IRQ-dis done, term=%x\n", __func__, term);
 }
 
-static void mdp4_overlay_dsi_video_start(void)
+void mdp4_overlay_dsi_video_start(void)
 {
 	if (!dsi_video_enabled) {
 		/* enable DSI block */
@@ -174,6 +174,9 @@ int mdp4_dsi_video_pipe_commit(int cndx, int wait, u32 *release_busy)
 	struct mdp4_overlay_pipe *real_pipe;
 	unsigned long flags;
 	int cnt = 0;
+#ifdef MDP_ODD_RESOLUTION_CTRL
+	int current_pipe_ndx = 0;
+#endif
 
 	vctrl = &vsync_ctrl_db[cndx];
 
@@ -292,6 +295,12 @@ int mdp4_dsi_video_pipe_commit(int cndx, int wait, u32 *release_busy)
 		else
 			mdp4_dsi_video_wait4vsync(0);
 	}
+#ifdef MDP_ODD_RESOLUTION_CTRL
+	current_pipe_ndx = pipe->pipe_ndx;
+	for (i = current_pipe_ndx ; i >= 0; i--, pipe--) {
+		pipe->check_odd_res = 0;
+	}
+#endif
 
 	return cnt;
 }
@@ -382,8 +391,10 @@ static void mdp4_dsi_video_wait4dmap(int cndx)
 
 	if (atomic_read(&vctrl->suspend) > 0)
 		return;
-
-	wait_for_completion(&vctrl->dmap_comp);
+	if (!wait_for_completion_timeout(&vctrl->dmap_comp,
+		msecs_to_jiffies(VSYNC_PERIOD * 4))) {
+			pr_err("%s: dma timeout error\n", __func__);
+	}
 }
 
 
@@ -405,6 +416,27 @@ static void mdp4_dsi_video_wait4dmap_done(int cndx)
 	mdp4_dsi_video_wait4dmap(cndx);
 }
 
+void mdp4_dsi_video_wait4dmap_for_dsi(int cndx)
+{
+	unsigned long flags;
+	struct vsycn_ctrl *vctrl;
+
+	if (cndx >= MAX_CONTROLLER) {
+		pr_err("%s: out or range: cndx=%d\n", __func__, cndx);
+		return;
+	}
+	vctrl = &vsync_ctrl_db[cndx];
+
+	if (mdp_intr_mask & INTR_DMA_P_DONE)
+		mdp4_dsi_video_wait4dmap(cndx);
+	else {
+		spin_lock_irqsave(&vctrl->spin_lock, flags);
+		INIT_COMPLETION(vctrl->dmap_comp);
+		vsync_irq_enable(INTR_DMA_P_DONE, MDP_DMAP_TERM);
+		spin_unlock_irqrestore(&vctrl->spin_lock, flags);
+		mdp4_dsi_video_wait4dmap(cndx);
+	}
+}
 
 static void mdp4_dsi_video_wait4ov(int cndx)
 {
@@ -745,7 +777,7 @@ int mdp4_dsi_video_on(struct platform_device *pdev)
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
 
 	mdp_histogram_ctrl_all(TRUE);
-	mdp4_overlay_dsi_video_start();
+//	mdp4_overlay_dsi_video_start();
 	mutex_unlock(&mfd->dma->ov_mutex);
 
 	return ret;

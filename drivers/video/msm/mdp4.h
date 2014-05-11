@@ -33,8 +33,8 @@ extern u32 mdp_max_clk;
 extern u64 mdp_max_bw;
 extern u32 mdp_bw_ab_factor;
 extern u32 mdp_bw_ib_factor;
-#define MDP4_BW_AB_DEFAULT_FACTOR (115)	/* 1.15 */
-#define MDP4_BW_IB_DEFAULT_FACTOR (150)	/* 1.5 */
+#define MDP4_BW_AB_DEFAULT_FACTOR (200)	/* 2.00 */
+#define MDP4_BW_IB_DEFAULT_FACTOR (210)	/* 2.10 */
 #define MDP_BUS_SCALE_AB_STEP (0x4000000)
 
 #define MDP4_OVERLAYPROC0_BASE	0x10000
@@ -51,6 +51,7 @@ extern u32 mdp_bw_ib_factor;
 /* chip select controller */
 #define CS_CONTROLLER_0 0x0707ffff
 #define CS_CONTROLLER_1 0x03073f3f
+#define MDP_ODD_RESOLUTION_CTRL
 
 typedef int (*cmd_fxn_t)(struct platform_device *pdev);
 
@@ -381,6 +382,9 @@ struct mdp4_overlay_pipe {
 	struct completion comp;
 	struct completion dmas_comp;
 	struct mdp4_iommu_pipe_info iommu;
+#ifdef MDP_ODD_RESOLUTION_CTRL
+	uint32 check_odd_res;
+#endif
 };
 
 struct mdp4_statistic {

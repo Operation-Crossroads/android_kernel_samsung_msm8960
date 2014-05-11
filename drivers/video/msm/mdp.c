@@ -48,8 +48,10 @@
 #undef CONFIG_HAS_EARLYSUSPEND
 #endif
 
-uint32 mdp4_extn_disp;
+/* Check if LCD was connected. */
+#include "mipi_samsung_oled.h"
 
+uint32 mdp4_extn_disp;
 static struct clk *mdp_clk;
 static struct clk *mdp_pclk;
 static struct clk *mdp_lut_clk;
@@ -68,7 +70,7 @@ static struct res_mmu_clk mdp_sec_mmu_clks[] = {
 int mdp_rev;
 int mdp_iommu_split_domain;
 u32 mdp_max_clk = 266667000;
-u64 mdp_max_bw = 2000000000;
+u64 mdp_max_bw = 3080000000UL;
 u32 mdp_bw_ab_factor = MDP4_BW_AB_DEFAULT_FACTOR;
 u32 mdp_bw_ib_factor = MDP4_BW_IB_DEFAULT_FACTOR;
 static struct platform_device *mdp_init_pdev;
@@ -2417,11 +2419,10 @@ void mdp4_hw_init(void)
 
 #endif
 
-int mdp_bus_scale_restore_request(void);
-
 static int mdp_on(struct platform_device *pdev)
 {
 	int ret = 0;
+	unsigned long flag;
 	struct msm_fb_data_type *mfd;
 	int i;
 	mfd = platform_get_drvdata(pdev);
@@ -2432,6 +2433,7 @@ static int mdp_on(struct platform_device *pdev)
 		mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
 		mdp_clk_ctrl(1);
 		mdp_bus_scale_restore_request();
+
 		mdp4_hw_init();
 
 		/* Initialize HistLUT to last LUT */
@@ -2468,6 +2470,12 @@ static int mdp_on(struct platform_device *pdev)
 
 	ret = panel_next_on(pdev);
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
+
+	mdp4_overlay_dsi_video_start();
+
+	spin_lock_irqsave(&mdp_spin_lock, flag);
+	outp32(MDP_INTR_CLEAR, 0xffffffff);
+	spin_unlock_irqrestore(&mdp_spin_lock, flag);
 
 	mdp_histogram_ctrl_all(TRUE);
 
@@ -2632,6 +2640,17 @@ int mdp_bus_scale_update_request(u64 ab_p0, u64 ib_p0, u64 ab_p1, u64 ib_p1)
 }
 int mdp_bus_scale_restore_request(void)
 {
+	u64 ab, ib;
+	if (!bus_index ||
+		!mdp_bus_usecases[bus_index].vectors[0].ab) {
+		ab = mdp_max_bw;
+		ib = mdp_max_bw;
+	} else {
+		ab = mdp_bus_usecases[bus_index].vectors[0].ab;
+		ib = mdp_bus_usecases[bus_index].vectors[0].ib;
+	}
+	pr_info("%s: ab=%llu ib=%llu\n", __func__, ab, ib);
+
 	pr_debug("%s: index=%d ab_p0=%llu ib_p0=%llu\n", __func__, bus_index,
 		 mdp_bus_usecases[bus_index].vectors[0].ab,
 		 mdp_bus_usecases[bus_index].vectors[0].ib);
@@ -2639,16 +2658,9 @@ int mdp_bus_scale_restore_request(void)
 		 mdp_bus_usecases[bus_index].vectors[1].ab,
 		 mdp_bus_usecases[bus_index].vectors[1].ib);
 
-	return mdp_bus_scale_update_request
-		(mdp_bus_usecases[bus_index].vectors[0].ab,
-		 mdp_bus_usecases[bus_index].vectors[0].ib,
-		 mdp_bus_usecases[bus_index].vectors[1].ab,
-		 mdp_bus_usecases[bus_index].vectors[1].ib);
-}
-#else
-static int mdp_bus_scale_restore_request(void)
-{
-	return 0;
+	return mdp_bus_scale_update_request(ab, ib,
+		mdp_bus_usecases[bus_index].vectors[1].ab,
+		mdp_bus_usecases[bus_index].vectors[1].ib);
 }
 #endif
 DEFINE_MUTEX(mdp_clk_lock);
@@ -2732,6 +2744,12 @@ static int mdp_irq_clk_setup(struct platform_device *pdev,
 	} else {
 		regulator_enable(footswitch);
 		mdp_footswitch_on = 1;
+
+		if (mdp_rev == MDP_REV_42 && !cont_splashScreen) {
+			regulator_disable(footswitch);
+			msleep(20);
+			regulator_enable(footswitch);
+		}
 	}
 
 	mdp_clk = clk_get(&pdev->dev, "core_clk");
@@ -2811,7 +2829,9 @@ static int mdp_probe(struct platform_device *pdev)
 #if defined(CONFIG_FB_MSM_MIPI_DSI) && defined(CONFIG_FB_MSM_MDP40)
 	struct mipi_panel_info *mipi;
 #endif
-
+#if !defined(CONFIG_MACH_MELIUS) && !defined(CONFIG_MACH_SERRANO) && !defined(CONFIG_MACH_GOLDEN) && !defined(CONFIG_MACH_LT02) && !defined(CONFIG_MACH_WILCOX_EUR_LTE)
+	static int contSplash_update_done;
+#endif
 	if ((pdev->id == 0) && (pdev->num_resources > 0)) {
 		mdp_init_pdev = pdev;
 		mdp_pdata = pdev->dev.platform_data;
@@ -2887,6 +2907,23 @@ static int mdp_probe(struct platform_device *pdev)
 	mfd->mdp_rev = mdp_rev;
 	mfd->vsync_init = NULL;
 
+	if (mdp_pdata) {
+#if !defined (CONFIG_MACH_MELIUS) && !defined(CONFIG_MACH_SERRANO) && !defined(CONFIG_MACH_GOLDEN) && !defined(CONFIG_MACH_LT02) && !defined(CONFIG_MACH_WILCOX_EUR_LTE)
+		if ((get_lcd_attached()) && mdp_pdata->cont_splash_enabled) {
+			mfd->cont_splash_done = 0;
+			if (!contSplash_update_done) {
+				if (mfd->panel.type == MIPI_VIDEO_PANEL ||
+				    mfd->panel.type == LCDC_PANEL)
+					mdp_pipe_ctrl(MDP_CMD_BLOCK,
+						MDP_BLOCK_POWER_ON, FALSE);
+				mdp_clk_ctrl(1);
+				contSplash_update_done = 1;
+			}
+		} else
+			mfd->cont_splash_done = 1;
+#endif
+	}
+
 	mfd->ov0_wb_buf = MDP_ALLOC(sizeof(struct mdp_buf_type));
 	mfd->ov1_wb_buf = MDP_ALLOC(sizeof(struct mdp_buf_type));
 	memset((void *)mfd->ov0_wb_buf, 0, sizeof(struct mdp_buf_type));
@@ -2915,10 +2952,16 @@ static int mdp_probe(struct platform_device *pdev)
 		rc = -ENOMEM;
 		goto mdp_probe_err;
 	}
+#if defined (CONFIG_MACH_MELIUS) || defined (CONFIG_MACH_SERRANO) || defined (CONFIG_MACH_GOLDEN) || defined (CONFIG_MACH_LT02) || defined(CONFIG_MACH_WILCOX_EUR_LTE)
 
 	if (mdp_pdata) {
+#if defined (CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_QHD_PT)
+		if ((get_lcd_attached()) && mdp_pdata->cont_splash_enabled &&
+				 mfd->panel_info.pdest == DISPLAY_1) {
+#else
 		if (mdp_pdata->cont_splash_enabled &&
 				 mfd->panel_info.pdest == DISPLAY_1) {
+#endif
 			char *cp;
 			uint32 bpp = 3;
 			/*read panel wxh and calculate splash screen
@@ -2963,7 +3006,7 @@ static int mdp_probe(struct platform_device *pdev)
 
 		mfd->cont_splash_done = (1 - mdp_pdata->cont_splash_enabled);
 	}
-
+#endif
 	/* data chain */
 	pdata = msm_fb_dev->dev.platform_data;
 	pdata->on = mdp_on;
@@ -3269,10 +3312,8 @@ static int mdp_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	/* req bus bandwidth immediately */
-	mdp_bus_scale_update_request(mdp_max_bw,
-				     mdp_max_bw,
-				     mdp_max_bw,
-				     mdp_max_bw);
+	if (!(mfd->cont_splash_done))
+		mdp_bus_scale_update_request(mdp_max_bw, mdp_max_bw,mdp_max_bw,mdp_max_bw);
 #endif
 
 	/* set driver data */
