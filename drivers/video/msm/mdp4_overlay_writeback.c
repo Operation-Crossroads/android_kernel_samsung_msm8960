@@ -388,11 +388,21 @@ int mdp4_wfd_pipe_commit(struct msm_fb_data_type *mfd,
 	if (rc != 0) {
 		pr_err("%s: mdp4_wfd_dequeue_update failed !! mfd=%x\n",
 			__func__, (int)mfd);
+#if !defined(CONFIG_ARCH_MSM8930)
+		pipe = vp->plist;
+		for (i = 0; i < OVERLAY_PIPE_MAX; i++, pipe++) {
+			pipe->pipe_used = 0;
+			pr_info("%s: dequeue update failed, unsetting pipes\n", __func__);
+		}
+
+		return cnt;
+#endif /* CONFIG_ARCH_MSM8930 */
 	}
 	/* free previous committed iommu back to pool */
 	mdp4_overlay_iommu_unmap_freelist(mixer);
 
 	mdp_clk_ctrl(1);
+
 	pipe = vp->plist;
 	for (i = 0; i < OVERLAY_PIPE_MAX; i++, pipe++) {
 		if (pipe->pipe_used) {
