@@ -1057,10 +1057,13 @@ void mipi_dsi_wait4video_done(void)
 	spin_lock_irqsave(&dsi_mdp_lock, flag);
 	INIT_COMPLETION(dsi_video_comp);
 	mipi_dsi_enable_irq(DSI_VIDEO_TERM);
+	mipi_dsi_irq_set(DSI_INTR_VIDEO_DONE_MASK, DSI_INTR_VIDEO_DONE_MASK);
 	spin_unlock_irqrestore(&dsi_mdp_lock, flag);
 
-	wait_for_completion_timeout(&dsi_video_comp,
-					msecs_to_jiffies(VSYNC_PERIOD * 4));
+	if (!wait_for_completion_timeout(&dsi_video_comp,
+					msecs_to_jiffies(200))) {
+		pr_err("%s: video_done timeout error\n", __func__);
+	}
 }
 
 void mipi_dsi_mdp_busy_wait(void)
@@ -1170,12 +1173,12 @@ int mipi_dsi_cmd_reg_tx(uint32 data)
  * mipi_dsi_cmds_tx:
  * thread context only
  */
+int dsi_enabled;
 int mipi_dsi_cmds_tx(struct dsi_buf *tp, struct dsi_cmd_desc *cmds, int cnt)
 {
 	struct dsi_cmd_desc *cm;
 	uint32 dsi_ctrl, ctrl;
 	int i, video_mode;
-
 	/* turn on cmd mode
 	* for video mode, do not send cmds more than
 	* one pixel line, since it only transmit it
@@ -1184,12 +1187,13 @@ int mipi_dsi_cmds_tx(struct dsi_buf *tp, struct dsi_cmd_desc *cmds, int cnt)
 	dsi_ctrl = MIPI_INP(MIPI_DSI_BASE + 0x0000);
 	video_mode = dsi_ctrl & 0x02; /* VIDEO_MODE_EN */
 	if (video_mode) {
+		if (!(dsi_ctrl & 0x01)) {
+			dsi_ctrl |= 0x01;
+			dsi_enabled++;
+			pr_info("%s dsi is not enabled", __func__);
+		}
 		ctrl = dsi_ctrl | 0x04; /* CMD_MODE_EN */
 		MIPI_OUTP(MIPI_DSI_BASE + 0x0000, ctrl);
-#if 0
-//#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OLED_VIDEO_WVGA_PT)
-		mdp4_dsi_video_wait4dmap_for_dsi(0);
-#endif
 	}
 
 	cm = cmds;
@@ -1222,11 +1226,15 @@ int mipi_dsi_cmds_single_tx(struct dsi_buf *tp, struct dsi_cmd_desc *cmds,
 	int i, j = 0, k = 0, cmd_len = 0, video_mode;
 	char *cmds_tx;
 	char *bp;
-
 	if (tp == NULL || cmds == NULL) {
 		pr_err("%s: Null commands", __func__);
 		return -EINVAL;
 	}
+	pr_debug("%s:++\n",__func__);
+
+	/*Set Last Bit, only for last packet */
+	for (i = 0; i < cnt; i++) cmds[i].last = 0;
+	cmds[cnt-1].last = 1;
 
 	/* turn on cmd mode
 	* for video mode, do not send cmds more than
@@ -1262,6 +1270,7 @@ int mipi_dsi_cmds_single_tx(struct dsi_buf *tp, struct dsi_cmd_desc *cmds,
 
 	if (video_mode)
 		MIPI_OUTP(MIPI_DSI_BASE + 0x0000, dsi_ctrl); /* restore */
+	pr_debug("%s:---\n",__func__);
 
 	return cnt;
 }
@@ -1292,6 +1301,28 @@ int mipi_dsi_cmds_rx(struct msm_fb_data_type *mfd,
 {
 	int cnt, len, diff, pkt_size;
 	char cmd;
+
+	uint32 dsi_ctrl, ctrl;
+	int video_mode;
+
+	/* turn on cmd mode
+	* for video mode, do not send cmds more than
+	* one pixel line, since it only transmit it
+	* during BLLP.
+	*/
+	dsi_ctrl = MIPI_INP(MIPI_DSI_BASE + 0x0000);
+	video_mode = dsi_ctrl & 0x02; /* VIDEO_MODE_EN */
+	if (video_mode) {
+		if (!(dsi_ctrl & 0x01)) {
+			dsi_ctrl |= 0x01;
+			dsi_enabled++;
+			pr_info("%s dsi is not enabled", __func__);
+		}
+
+		ctrl = dsi_ctrl | 0x04; /* CMD_MODE_EN */
+		MIPI_OUTP(MIPI_DSI_BASE + 0x0000, ctrl);
+		mdp4_dsi_video_wait4dmap_for_dsi(0);
+	}
 
 	if (mfd->panel_info.mipi.no_max_pkt_size) {
 		/* Only support rlen = 4*n */
@@ -1360,6 +1391,9 @@ int mipi_dsi_cmds_rx(struct msm_fb_data_type *mfd,
 	}
 
 	mipi_dsi_cmd_dma_rx(rp, cnt);
+
+	if (video_mode)
+		MIPI_OUTP(MIPI_DSI_BASE + 0x0000, dsi_ctrl); /* restore */
 
 	if (mfd->panel_info.mipi.no_max_pkt_size) {
 		/*
@@ -1708,7 +1742,8 @@ int mipi_dsi_cmd_dma_tx(struct dsi_buf *tp)
 			msleep(1);
 	}
 
-	dma_unmap_single(&dsi_dev, tp->dmap, tp->len, DMA_TO_DEVICE);
+	if (tp->dmap != 0)
+		dma_unmap_single(&dsi_dev, tp->dmap, tp->len, DMA_TO_DEVICE);
 	tp->dmap = 0;
 	return tp->len;
 }
@@ -2016,6 +2051,7 @@ irqreturn_t mipi_dsi_isr(int irq, void *ptr)
 
 	if (isr & DSI_INTR_VIDEO_DONE) {
 		spin_lock(&dsi_mdp_lock);
+		mipi_dsi_irq_set(DSI_INTR_VIDEO_DONE_MASK, 0);
 		mipi_dsi_disable_irq_nosync(DSI_VIDEO_TERM);
 		complete(&dsi_video_comp);
 		spin_unlock(&dsi_mdp_lock);

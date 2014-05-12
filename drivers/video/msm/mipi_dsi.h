@@ -191,7 +191,7 @@ struct dsi_clk_desc {
 #define DSI_HDR_DATA1(data)	((data) & 0x0ff)
 #define DSI_HDR_WC(wc)		((wc) & 0x0ffff)
 
-#define DSI_BUF_SIZE	64
+#define DSI_BUF_SIZE	256
 #define MIPI_DSI_MRPS	0x04	/* Maximum Return Packet Size */
 
 #define MIPI_DSI_LEN 8 /* 4 x 4 - 6 - 2, bytes dcs header+crc-align  */
@@ -388,5 +388,8 @@ void mipi_dsi_wait4video_done(void);
 #ifdef CONFIG_FB_MSM_MDP303
 void update_lane_config(struct msm_panel_info *pinfo);
 #endif
+
+void mipi_dsi_irq_set(uint32 mask, uint32 irq);
+void mdp4_dsi_video_wait4dmap_for_dsi(int cndx);
 
 #endif /* MIPI_DSI_H */
