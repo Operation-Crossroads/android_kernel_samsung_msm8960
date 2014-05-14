@@ -115,6 +115,7 @@ extern void msm8960_add_vidc_device(void);
 extern void msm_otg_set_vbus_state(int);
 extern void msm_otg_set_charging_state(bool);
 extern void msm_otg_set_id_state(bool);
+extern void msm_otg_set_smartdock_state(bool enable);
 
 #if defined(CONFIG_BCM4334) || defined(CONFIG_BCM4334_MODULE)
 int brcm_wlan_init(void);

@@ -277,7 +277,6 @@ static void sensor_power_on_vdd(int, int);
 #define KS8851_IRQ_GPIO		90
 #endif
 
-
 #define HAP_SHIFT_LVL_OE_GPIO	47
 
 #if defined(CONFIG_GPIO_SX150X) || defined(CONFIG_GPIO_SX150X_MODULE)
@@ -1206,12 +1205,13 @@ static void fsa9485_mhl_cb(bool attached, int mhl_charge)
 		pr_err("%s: invalid cable :%d\n", __func__, set_cable_status);
 		return;
 	}
-
-	ret = psy->set_property(psy, POWER_SUPPLY_PROP_ONLINE,
-		&value);
-	if (ret) {
-		pr_err("%s: fail to set power_suppy ONLINE property(%d)\n",
+	if (psy) {
+		ret = psy->set_property(psy, POWER_SUPPLY_PROP_ONLINE,
+			&value);
+		if (ret) {
+			pr_err("%s: fail to set power_suppy ONLINE property(%d)\n",
 			__func__, ret);
+		}
 	}
 }
 #else
@@ -1245,12 +1245,13 @@ static void fsa9485_mhl_cb(bool attached)
 		pr_err("%s: invalid cable :%d\n", __func__, set_cable_status);
 		return;
 	}
-
-	ret = psy->set_property(psy, POWER_SUPPLY_PROP_ONLINE,
-		&value);
-	if (ret) {
-		pr_err("%s: fail to set power_suppy ONLINE property(%d)\n",
+	if (psy) {
+		ret = psy->set_property(psy, POWER_SUPPLY_PROP_ONLINE,
+			&value);
+		if (ret) {
+			pr_err("%s: fail to set power_suppy ONLINE property(%d)\n",
 			__func__, ret);
+		}
 	}
 }
 #endif
@@ -1260,10 +1261,72 @@ static void fsa9485_otg_cb(bool attached)
 
 	if (attached) {
 		pr_info("%s set id state\n", __func__);
-//		msm_otg_set_id_state(attached);
+		msm_otg_set_id_state(0);
+	}
+	else {
+		pr_info("%s set id state\n", __func__);
+		msm_otg_set_id_state(1);
 	}
 }
 
+#ifdef CONFIG_VP_A2220
+static int a2220_hw_init(void)
+{
+	int rc = 0;
+
+	rc = gpio_request(gpio_rev(A2220_WAKEUP), "a2220_wakeup");
+	if (rc < 0) {
+		pr_err("%s: gpio request wakeup pin failed\n", __func__);
+		goto err_alloc_data_failed;
+	}
+
+	rc = gpio_direction_output(gpio_rev(A2220_WAKEUP), 1);
+	if (rc < 0) {
+		pr_err("%s: request wakeup gpio direction failed\n", __func__);
+		goto err_free_gpio;
+	}
+
+	rc = gpio_request(MSM_AUD_A2220_RESET, "a2220_reset");
+	if (rc < 0) {
+		pr_err("%s: gpio request reset pin failed\n", __func__);
+		goto err_free_gpio;
+	}
+
+	rc = gpio_direction_output(MSM_AUD_A2220_RESET, 1);
+	if (rc < 0) {
+		pr_err("%s: request reset gpio direction failed\n", __func__);
+		goto err_free_gpio_all;
+	}
+	gpio_set_value(gpio_rev(A2220_WAKEUP), 1);
+	gpio_set_value(MSM_AUD_A2220_RESET, 1);
+	return rc;
+
+err_free_gpio_all:
+	gpio_free(MSM_AUD_A2220_RESET);
+err_free_gpio:
+	gpio_free(gpio_rev(A2220_WAKEUP));
+err_alloc_data_failed:
+	pr_err("a2220_probe - failed\n");
+	return rc;
+}
+
+static struct a2220_platform_data a2220_data = {
+	.a2220_hw_init = a2220_hw_init,
+	.gpio_reset = MSM_AUD_A2220_RESET,
+};
+
+static struct i2c_board_info a2220_device[] __initdata = {
+	{
+		I2C_BOARD_INFO("audience_a2220", 0x3E),
+		.platform_data = &a2220_data,
+	},
+};
+
+static struct i2c_gpio_platform_data  a2220_i2c_gpio_data = {
+	.udelay			= 1,
+};
+
+#endif
 static void fsa9485_usb_cb(bool attached)
 {
 	union power_supply_propval value;
@@ -1273,11 +1336,9 @@ static void fsa9485_usb_cb(bool attached)
 	pr_info("fsa9485_usb_cb attached %d\n", attached);
 	set_cable_status = attached ? CABLE_TYPE_USB : CABLE_TYPE_NONE;
 
-	if (system_rev >= 0x9) {
-//		if (attached) {
+	if (system_rev >= 0x4) {
 			pr_info("%s set vbus state\n", __func__);
 			msm_otg_set_vbus_state(attached);
-//		}
 	}
 
 	for (i = 0; i < 10; i++) {
@@ -1426,7 +1487,7 @@ static void fsa9485_usb_cdp_cb(bool attached)
 	set_cable_status =
 		attached ? CABLE_TYPE_CDP : CABLE_TYPE_NONE;
 
-	if (system_rev >= 0x9) {
+	if (system_rev >= 0x4) {
 		if (attached) {
 			pr_info("%s set vbus state\n", __func__);
 			msm_otg_set_vbus_state(attached);
@@ -1502,15 +1563,50 @@ static void fsa9485_smartdock_cb(bool attached)
 		pr_err("%s: fail to set power_suppy ONLINE property(%d)\n",
 			__func__, ret);
 	}
-
-//	msm_otg_set_smartdock_state(attached);
+	msm_otg_set_smartdock_state(0);
 }
 
 static void fsa9485_audio_dock_cb(bool attached)
 {
+	union power_supply_propval value;
+	int i, ret = 0;
+	struct power_supply *psy;
+
 	pr_info("fsa9485_audio_dock_cb attached %d\n", attached);
 
-//	msm_otg_set_smartdock_state(attached);
+	set_cable_status =
+		attached ? CABLE_TYPE_AC : CABLE_TYPE_NONE;
+
+	for (i = 0; i < 10; i++) {
+		psy = power_supply_get_by_name("battery");
+		if (psy)
+			break;
+	}
+	if (i == 10) {
+		pr_err("%s: fail to get battery ps\n", __func__);
+		return;
+	}
+
+	switch (set_cable_status) {
+	case CABLE_TYPE_AC:
+		value.intval = POWER_SUPPLY_TYPE_MAINS;
+		break;
+	case CABLE_TYPE_NONE:
+		value.intval = POWER_SUPPLY_TYPE_BATTERY;
+		break;
+	default:
+		pr_err("invalid status:%d\n", attached);
+		return;
+	}
+
+	ret = psy->set_property(psy, POWER_SUPPLY_PROP_ONLINE,
+		&value);
+	if (ret) {
+		pr_err("%s: fail to set power_suppy ONLINE property(%d)\n",
+			__func__, ret);
+	}
+
+	msm_otg_set_smartdock_state(0);
 }
 
 static int fsa9485_dock_init(void)
@@ -1525,7 +1621,6 @@ static int fsa9485_dock_init(void)
 	}
 	return 0;
 }
-
 int msm8960_get_cable_type(void)
 {
 #ifdef CONFIG_WIRELESS_CHARGING
@@ -1540,7 +1635,7 @@ int msm8960_get_cable_type(void)
 	}
 	if (i == 10) {
 		pr_err("%s: fail to get battery ps\n", __func__);
-		return -1;
+		return 0;
 	}
 #endif
 
@@ -1620,7 +1715,7 @@ static void msm8960_mhl_gpio_init(void)
 {
 	int ret;
 
-	ret = gpio_request(gpio_rev(MHL_EN), "mhl_en");
+	ret = gpio_request(GPIO_MHL_EN, "mhl_en");
 	if (ret < 0) {
 		pr_err("mhl_en gpio_request is failed\n");
 		return;
@@ -1636,7 +1731,7 @@ static void msm8960_mhl_gpio_init(void)
 
 static void mhl_gpio_config(void)
 {
-	gpio_tlmm_config(GPIO_CFG(gpio_rev(MHL_EN), 0, GPIO_CFG_OUTPUT,
+	gpio_tlmm_config(GPIO_CFG(GPIO_MHL_EN, 0, GPIO_CFG_OUTPUT,
 				GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), 1);
 	gpio_tlmm_config(GPIO_CFG(GPIO_MHL_RST, 0, GPIO_CFG_OUTPUT,
 				GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), 1);
@@ -1673,30 +1768,27 @@ static void sii9234_hw_onoff(bool onoff)
 	VMHL_3.3V, VSIL_A_1.2V, VMHL_1.8V
 	just power control with HDMI_EN pin or control Regulator12*/
 	if (onoff) {
-		gpio_tlmm_config(GPIO_CFG(gpio_rev(MHL_EN), 0, GPIO_CFG_OUTPUT,
+		gpio_tlmm_config(GPIO_CFG(GPIO_MHL_EN, 0, GPIO_CFG_OUTPUT,
 			GPIO_CFG_PULL_UP, GPIO_CFG_2MA), 1);
-		if (system_rev > BOARD_REV01) {
-			mhl_l12 = regulator_get(NULL, "8921_l12");
-			rc = regulator_set_voltage(mhl_l12, 1200000, 1200000);
-			if (rc)
-				pr_err("error setting voltage\n");
-			rc = regulator_enable(mhl_l12);
-				if (rc)
-					pr_err("error enabling regulator\n");
-			usleep(1*1000);
-		}
 
-		gpio_direction_output(gpio_rev(MHL_EN), 1);
+		mhl_l12 = regulator_get(NULL, "8921_l12");
+		rc = regulator_set_voltage(mhl_l12, 1200000, 1200000);
+		if (rc)
+			pr_err("error setting voltage\n");
+		rc = regulator_enable(mhl_l12);
+		if (rc)
+			pr_err("error enabling regulator\n");
+		usleep(1*1000);
+
+		gpio_direction_output(GPIO_MHL_EN, 1);
+
 	} else {
-		gpio_direction_output(gpio_rev(MHL_EN), 0);
-
-		if (system_rev > BOARD_REV01) {
-			if (mhl_l12) {
-				rc = regulator_disable(mhl_l12);
-				if (rc)
-					pr_err("error disabling regulator\n");
-			}
-	}
+		gpio_direction_output(GPIO_MHL_EN, 0);
+		if (mhl_l12) {
+			rc = regulator_disable(mhl_l12);
+			if (rc)
+				pr_err("error disabling regulator\n");
+		}
 
 		usleep_range(10000, 20000);
 
@@ -1704,7 +1796,7 @@ static void sii9234_hw_onoff(bool onoff)
 			pr_err("%s error in making GPIO_MHL_RST Low\n"
 			, __func__);
 
-		gpio_tlmm_config(GPIO_CFG(gpio_rev(MHL_EN), 0, GPIO_CFG_OUTPUT,
+		gpio_tlmm_config(GPIO_CFG(GPIO_MHL_EN, 0, GPIO_CFG_OUTPUT,
 			GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), 1);
 	}
 
@@ -1736,7 +1828,7 @@ struct sii9234_platform_data sii9234_pdata = {
 	.hw_reset = sii9234_hw_reset,
 	.gpio_cfg = mhl_gpio_config,
 	.swing_level = 0xEB,
-#if defined(CONFIG_VIDEO_MHL_V2)
+#if CONFIG_USB_SWITCH_FSA9485
 	.vbus_present = fsa9485_mhl_cb,
 #endif
 };
@@ -2612,88 +2704,6 @@ static void cm36651_led_onoff(int onoff)
 }
 #endif
 
-#ifdef CONFIG_VP_A2220
-static int a2220_hw_init(void)
-{
-	int rc = 0;
-
-	rc = gpio_request(gpio_rev(A2220_WAKEUP), "a2220_wakeup");
-	if (rc < 0) {
-		pr_err("%s: gpio request wakeup pin failed\n", __func__);
-		goto err_alloc_data_failed;
-	}
-
-	rc = gpio_direction_output(gpio_rev(A2220_WAKEUP), 1);
-	if (rc < 0) {
-		pr_err("%s: request wakeup gpio direction failed\n", __func__);
-		goto err_free_gpio;
-	}
-
-	rc = gpio_request(MSM_AUD_A2220_RESET, "a2220_reset");
-	if (rc < 0) {
-		pr_err("%s: gpio request reset pin failed\n", __func__);
-		goto err_free_gpio;
-	}
-
-	rc = gpio_direction_output(MSM_AUD_A2220_RESET, 1);
-	if (rc < 0) {
-		pr_err("%s: request reset gpio direction failed\n", __func__);
-		goto err_free_gpio_all;
-	}
-	gpio_set_value(gpio_rev(A2220_WAKEUP), 1);
-	gpio_set_value(MSM_AUD_A2220_RESET, 1);
-	return rc;
-
-err_free_gpio_all:
-	gpio_free(MSM_AUD_A2220_RESET);
-err_free_gpio:
-	gpio_free(gpio_rev(A2220_WAKEUP));
-err_alloc_data_failed:
-	pr_err("a2220_probe - failed\n");
-	return rc;
-}
-
-static struct a2220_platform_data a2220_data = {
-	.a2220_hw_init = a2220_hw_init,
-	.gpio_reset = MSM_AUD_A2220_RESET,
-};
-
-static struct i2c_board_info a2220_device[] __initdata = {
-	{
-		I2C_BOARD_INFO("audience_a2220", 0x3E),
-		.platform_data = &a2220_data,
-	},
-};
-
-static struct i2c_gpio_platform_data  a2220_i2c_gpio_data = {
-	.udelay			= 1,
-};
-#if 0
-static struct platform_device a2220_i2c_gpio_device = {
-	.name			= "i2c-gpio",
-	.id			= MSM_A2220_I2C_BUS_ID,
-	.dev.platform_data	= &a2220_i2c_gpio_data,
-};
-#endif
-static struct gpiomux_setting a2220_gsbi_config = {
-	.func = GPIOMUX_FUNC_GPIO,
-	.drv = GPIOMUX_DRV_8MA,
-	.pull = GPIOMUX_PULL_NONE,
-};
-
-static struct msm_gpiomux_config msm8960_a2220_configs[] = {
-	{
-		.settings = {
-			[GPIOMUX_SUSPENDED] = &a2220_gsbi_config,
-		},
-	},
-	{
-		.settings = {
-			[GPIOMUX_SUSPENDED] = &a2220_gsbi_config,
-		},
-	},
-};
-#endif
 #ifdef CONFIG_WCD9310_CODEC
 
 #define TABLA_INTERRUPT_BASE (NR_MSM_IRQS + NR_GPIO_IRQS + NR_PM8921_IRQS)
@@ -3932,6 +3942,7 @@ static struct i2c_board_info mxt_device_info[] __initdata = {
 	},
 };
 #endif
+
 #ifndef CONFIG_SLIMBUS_MSM_CTRL
 #define TABLA_I2C_SLAVE_ADDR	0x0d
 #define TABLA_ANALOG_I2C_SLAVE_ADDR	0x77
@@ -5082,11 +5093,11 @@ static void __init gpio_rev_init(void)
 		opt_gp2a_data.p_out = gpio_rev(ALS_INT);
 #endif
 #endif
+#ifdef CONFIG_VP_A2220
 	a2220_i2c_gpio_data.sda_pin = gpio_rev(A2220_SDA);
 	a2220_i2c_gpio_data.scl_pin = gpio_rev(A2220_SCL);
 	a2220_data.gpio_wakeup = gpio_rev(A2220_WAKEUP);
-	msm8960_a2220_configs[0].gpio = gpio_rev(A2220_SDA);
-	msm8960_a2220_configs[1].gpio = gpio_rev(A2220_SCL);
+#endif /* CONFIG_VP_A2220 */
 #ifdef CONFIG_VIBETONZ
 	if (system_rev >= BOARD_REV09) {
 		msm_8960_vibrator_pdata.vib_en_gpio = PMIC_GPIO_VIB_ON;
@@ -5296,11 +5307,6 @@ static void __init samsung_m2_init(void)
 
 #ifdef CONFIG_USB_HOST_NOTIFY
 	msm_otg_power_init();
-#endif
-#ifdef CONFIG_VP_A2220
-	if (system_rev > BOARD_REV02)
-		msm_gpiomux_install(msm8960_a2220_configs,
-			ARRAY_SIZE(msm8960_a2220_configs));
 #endif
 
 #ifdef CONFIG_USB_EHCI_MSM_HSIC
